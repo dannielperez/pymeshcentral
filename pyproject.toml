@@ -11,6 +11,13 @@ license = "MIT"
 requires-python = ">=3.11"
 authors = [{ name = "Daniel Perez" }]
 keywords = ["meshcentral", "remote-access", "device-management"]
+dependencies = ["websockets>=15,<16"]
+
+[project.optional-dependencies]
+test = ["pytest>=8.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pymeshcentral"]

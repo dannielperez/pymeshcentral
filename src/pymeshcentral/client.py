@@ -47,6 +47,7 @@ class Device:
     hostname: str | None
     connected: bool
     raw: Mapping[str, Any]
+    logged_on_users: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -258,6 +259,18 @@ def _node_id(value: str) -> str:
     return value
 
 
+def _logged_on_users(entry: dict[str, Any]) -> tuple[str, ...] | None:
+    users = entry.get("users")
+    if users is None:
+        return None
+    if not isinstance(users, list) or any(
+        not isinstance(user, str) or not user.strip() for user in users
+    ):
+        raise MeshProtocolError("nodes response contained invalid users")
+    # Preserve domain/case qualifiers: identity policy belongs to the consumer.
+    return tuple(users)
+
+
 def _device(entry: dict[str, Any], mesh_id: str) -> Device:
     return Device(
         id=entry["_id"],
@@ -266,6 +279,7 @@ def _device(entry: dict[str, Any], mesh_id: str) -> Device:
         hostname=str(entry["host"]) if entry.get("host") else None,
         connected=bool(entry.get("conn")),
         raw=entry,
+        logged_on_users=_logged_on_users(entry),
     )
 
 

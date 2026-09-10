@@ -216,3 +216,70 @@ def test_protocol_shape_failure_is_typed():
 
     with pytest.raises(MeshProtocolError):
         mesh.list_devices()
+
+
+class DeadlineConnection(FakeConnection):
+    def __init__(self, clock, messages):
+        super().__init__(None)
+        self.clock = clock
+        self.messages = iter(messages)
+        self.budgets = []
+        self.closed = False
+
+    def __exit__(self, *args):
+        self.closed = True
+
+    def recv(self, timeout=None):
+        self.budgets.append(timeout)
+        elapsed, message = next(self.messages)
+        self.clock[0] += elapsed
+        return json.dumps(message(self.sent) if callable(message) else message)
+
+
+def deadline_client(monkeypatch, messages):
+    import pymeshcentral.client as client_module
+
+    clock = [100.0]
+    monkeypatch.setattr(client_module, "monotonic", lambda: clock[0], raising=False)
+    connection = DeadlineConnection(clock, messages)
+    mesh = MeshCentralClient(
+        "https://mesh.example.test", "opaque-cookie", timeout=2,
+        connector=lambda *args, **kwargs: connection,
+    )
+    return mesh, connection
+
+
+@pytest.mark.parametrize("event", [{"action": "event"}, ["event"], {"responseid": "other"}])
+def test_unrelated_events_consume_one_response_deadline(monkeypatch, event):
+    mesh, connection = deadline_client(
+        monkeypatch,
+        [(0.75, event)] * 3 + [(0, lambda command: response(command, nodes={}))],
+    )
+
+    with pytest.raises(MeshTimeout):
+        mesh.list_devices()
+
+    assert connection.budgets == pytest.approx([2, 1.25, 0.5])
+    assert connection.closed is True
+
+
+def test_correlated_response_before_deadline_succeeds_with_remaining_budget(monkeypatch):
+    mesh, connection = deadline_client(
+        monkeypatch,
+        [(0.75, {"action": "event"}), (0.5, lambda command: response(command, nodes={}))],
+    )
+
+    assert mesh.list_devices() == []
+    assert connection.budgets == pytest.approx([2, 1.25])
+    assert connection.closed is True
+
+
+def test_correlated_response_at_deadline_is_not_accepted(monkeypatch):
+    mesh, connection = deadline_client(
+        monkeypatch, [(2, lambda command: response(command, nodes={}))],
+    )
+
+    with pytest.raises(MeshTimeout):
+        mesh.list_devices()
+
+    assert connection.closed is True

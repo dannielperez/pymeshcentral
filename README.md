@@ -14,3 +14,13 @@ The public surface is intentionally bounded:
 Every call has connect/receive timeouts and TLS verification enabled. The SDK
 does not install agents, send email, persist workflow state, or retry mutations;
 those responsibilities belong to the UniqueOS adapter and worker.
+
+### Response timeout
+
+`timeout` is one monotonic response-wait budget after sending a command. Unrelated
+events, non-object messages and mismatched responses consume that same budget;
+they do not restart it. A response returned at or after the deadline raises
+`MeshTimeout`, and the connection is closed. Commands are not retried. Connection
+opening and closing retain their separate timeout bounds; this is not a single
+wall-clock deadline covering connection setup, sending, response processing and
+teardown.

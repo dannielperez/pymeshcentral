@@ -7,6 +7,7 @@ import ssl
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
+from time import monotonic
 from typing import Any, Protocol
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
@@ -198,8 +199,14 @@ class MeshCentralClient:
                 ssl=ssl.create_default_context(),
             ) as websocket:
                 websocket.send(json.dumps(command, separators=(",", ":")))
+                deadline = monotonic() + self._timeout
                 while True:
-                    raw = websocket.recv(timeout=self._timeout)
+                    remaining = deadline - monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError
+                    raw = websocket.recv(timeout=remaining)
+                    if monotonic() >= deadline:
+                        raise TimeoutError
                     response = json.loads(raw)
                     if not isinstance(response, dict):
                         continue

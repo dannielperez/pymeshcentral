@@ -24,3 +24,15 @@ they do not restart it. A response returned at or after the deadline raises
 opening and closing retain their separate timeout bounds; this is not a single
 wall-clock deadline covering connection setup, sending, response processing and
 teardown.
+
+### Reported device users
+
+`Device.logged_on_users` exposes the node's `users` list as an immutable tuple.
+Missing or null data returns `None` (unknown); an empty list returns `()`
+(reported empty). Domain qualifiers and case are preserved. Malformed data
+raises `MeshProtocolError` without including the payload in the error.
+
+This is reported evidence, without a freshness guarantee. It does not establish
+workstation ownership or authorize remote access. Consumers must apply their own
+identity, ambiguity, freshness and access policies. The existing six-argument
+`Device` constructor remains valid and defaults this field to `None`.

@@ -4,6 +4,7 @@ from datetime import timedelta
 import pytest
 
 from pymeshcentral import (
+    Device,
     MeshAuthError,
     MeshCentralClient,
     MeshProtocolError,
@@ -243,13 +244,17 @@ def deadline_client(monkeypatch, messages):
     monkeypatch.setattr(client_module, "monotonic", lambda: clock[0], raising=False)
     connection = DeadlineConnection(clock, messages)
     mesh = MeshCentralClient(
-        "https://mesh.example.test", "opaque-cookie", timeout=2,
+        "https://mesh.example.test",
+        "opaque-cookie",
+        timeout=2,
         connector=lambda *args, **kwargs: connection,
     )
     return mesh, connection
 
 
-@pytest.mark.parametrize("event", [{"action": "event"}, ["event"], {"responseid": "other"}])
+@pytest.mark.parametrize(
+    "event", [{"action": "event"}, ["event"], {"responseid": "other"}]
+)
 def test_unrelated_events_consume_one_response_deadline(monkeypatch, event):
     mesh, connection = deadline_client(
         monkeypatch,
@@ -263,10 +268,15 @@ def test_unrelated_events_consume_one_response_deadline(monkeypatch, event):
     assert connection.closed is True
 
 
-def test_correlated_response_before_deadline_succeeds_with_remaining_budget(monkeypatch):
+def test_correlated_response_before_deadline_succeeds_with_remaining_budget(
+    monkeypatch,
+):
     mesh, connection = deadline_client(
         monkeypatch,
-        [(0.75, {"action": "event"}), (0.5, lambda command: response(command, nodes={}))],
+        [
+            (0.75, {"action": "event"}),
+            (0.5, lambda command: response(command, nodes={})),
+        ],
     )
 
     assert mesh.list_devices() == []
@@ -276,10 +286,56 @@ def test_correlated_response_before_deadline_succeeds_with_remaining_budget(monk
 
 def test_correlated_response_at_deadline_is_not_accepted(monkeypatch):
     mesh, connection = deadline_client(
-        monkeypatch, [(2, lambda command: response(command, nodes={}))],
+        monkeypatch,
+        [(2, lambda command: response(command, nodes={}))],
     )
 
     with pytest.raises(MeshTimeout):
         mesh.list_devices()
 
     assert connection.closed is True
+
+
+@pytest.mark.parametrize(
+    ("fields", "expected"),
+    [
+        ({}, None),
+        ({"users": None}, None),
+        ({"users": []}, ()),
+        (
+            {"users": ["DOMAIN\\Alex", "OTHER\\Alex", "alex@example.invalid"]},
+            ("DOMAIN\\Alex", "OTHER\\Alex", "alex@example.invalid"),
+        ),
+    ],
+)
+def test_device_exposes_reported_users_without_guessing_identity(fields, expected):
+    mesh, _ = client(
+        lambda command: response(
+            command,
+            nodes={"mesh/domain/group": [{"_id": "node/domain/pc", **fields}]},
+        )
+    )
+    device = mesh.list_devices()[0]
+    assert getattr(device, "logged_on_users", None) == expected
+    if expected:
+        device.raw["users"].append("later-user")
+        assert device.logged_on_users == expected
+
+
+@pytest.mark.parametrize("users", ["DOMAIN\\Alex", {"name": "Alex"}, [7], [" "]])
+def test_malformed_reported_users_fail_closed_without_disclosing_payload(users):
+    mesh, _ = client(
+        lambda command: response(
+            command,
+            nodes={"mesh/domain/group": [{"_id": "node/domain/pc", "users": users}]},
+        )
+    )
+    with pytest.raises(
+        MeshProtocolError, match="^nodes response contained invalid users$"
+    ):
+        mesh.list_devices()
+
+
+def test_device_existing_constructor_defaults_to_unknown_user_evidence():
+    device = Device("node/domain/pc", "mesh/domain/group", "PC", None, False, {})
+    assert device.logged_on_users is None
